@@ -70,6 +70,17 @@ class TestRunner < Minitest::Spec
     pending_messages = runner.instance_variable_get(:@pending_messages)
     assert_equal 2, pending_messages.length
   end
+
+  it "queues messages from concurrent commands" do
+    runner = Bubbletea::Runner.new(DummyModel.new)
+    threads = 100.times.map do |index|
+      Thread.new { runner.send(index) }
+    end
+    threads.each(&:join)
+
+    pending_messages = runner.instance_variable_get(:@pending_messages)
+    assert_equal (0...100).to_a, pending_messages.sort
+  end
 end
 
 class TestRunnerCommandProcessing < Minitest::Spec
@@ -145,6 +156,15 @@ class TestRunnerCommandProcessing < Minitest::Spec
     assert_equal message, @model.messages[0]
   end
 
+  it "serializes concurrent model updates" do
+    threads = 100.times.map do |index|
+      Thread.new { @runner.__send__(:handle_message, index) }
+    end
+    threads.each(&:join)
+
+    assert_equal (0...100).to_a, @model.messages.sort
+  end
+
   it "process tick command" do
     cmd = Bubbletea.tick(0.1) { :tick_result }
 
@@ -155,6 +175,16 @@ class TestRunnerCommandProcessing < Minitest::Spec
     assert_equal 1, pending_ticks.length
     assert pending_ticks[0][:callback]
     assert_equal :tick_result, pending_ticks[0][:callback].call
+  end
+
+  it "queues ticks from concurrent commands" do
+    threads = 100.times.map do
+      Thread.new { @runner.__send__(:process_command, Bubbletea.tick(0.1) { :tick_result }) }
+    end
+    threads.each(&:join)
+
+    pending_ticks = @runner.instance_variable_get(:@pending_ticks)
+    assert_equal 100, pending_ticks.length
   end
 
   it "process nil command" do

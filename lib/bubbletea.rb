@@ -2,11 +2,15 @@
 
 require_relative "bubbletea/version"
 
-begin
-  major, minor, _patch = RUBY_VERSION.split(".") #: [String, String, String]
-  require_relative "bubbletea/#{major}.#{minor}/bubbletea"
-rescue LoadError
-  require_relative "bubbletea/bubbletea"
+if RUBY_ENGINE == "jruby"
+  require_relative "bubbletea/jruby"
+else
+  begin
+    major, minor, _patch = RUBY_VERSION.split(".") #: [String, String, String]
+    require_relative "bubbletea/#{major}.#{minor}/bubbletea"
+  rescue LoadError
+    require_relative "bubbletea/bubbletea"
+  end
 end
 
 require_relative "bubbletea/messages"

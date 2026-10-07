@@ -28,6 +28,9 @@ module Bubbletea
       @resize_pending = false
       @previous_winch_handler = nil
       @in_alt_screen = false
+      @update_mutex = Mutex.new
+      @pending_messages_mutex = Mutex.new
+      @pending_ticks_mutex = Mutex.new
     end
 
     def run
@@ -53,8 +56,10 @@ module Bubbletea
     end
 
     def send(message)
-      @pending_messages ||= []
-      @pending_messages << message
+      @pending_messages_mutex.synchronize do
+        @pending_messages ||= []
+        @pending_messages << message
+      end
     end
 
     private
@@ -171,19 +176,26 @@ module Bubbletea
     end
 
     def process_pending_messages
-      return unless @pending_messages&.any?
+      messages = @pending_messages_mutex.synchronize do
+        next [] unless @pending_messages&.any?
 
-      messages = @pending_messages
-      @pending_messages = []
+        pending_messages = @pending_messages
+        @pending_messages = []
+        pending_messages
+      end
 
       messages.each { |message| handle_message(message) }
     end
 
     def handle_message(message)
-      return unless @running
+      command = @update_mutex.synchronize do
+        next unless @running
 
-      new_model, command = @model.update(message)
-      @model = new_model if new_model
+        new_model, next_command = @model.update(message)
+        @model = new_model if new_model
+        next_command
+      end
+
       process_command(command)
     end
 
@@ -321,22 +333,29 @@ module Bubbletea
     end
 
     def schedule_tick(tick_command)
-      @pending_ticks << {
-        at: Time.now + tick_command.duration,
-        callback: tick_command.callback,
-      }
+      @pending_ticks_mutex.synchronize do
+        @pending_ticks << {
+          at: Time.now + tick_command.duration,
+          callback: tick_command.callback,
+        }
+      end
     end
 
     def schedule_delayed_message(send_command)
-      @pending_ticks << {
-        at: Time.now + send_command.delay,
-        message: send_command.message,
-      }
+      @pending_ticks_mutex.synchronize do
+        @pending_ticks << {
+          at: Time.now + send_command.delay,
+          message: send_command.message,
+        }
+      end
     end
 
     def process_ticks
       now = Time.now
-      ready, @pending_ticks = @pending_ticks.partition { |tick| tick[:at] <= now }
+      ready = @pending_ticks_mutex.synchronize do
+        ready_ticks, @pending_ticks = @pending_ticks.partition { |tick| tick[:at] <= now }
+        ready_ticks
+      end
 
       ready.each do |tick|
         if tick[:callback]
